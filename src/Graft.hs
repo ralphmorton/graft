@@ -21,7 +21,6 @@ import qualified Data.Text as T
 import System.Directory (doesFileExist, getDirectoryContents)
 import Text.Parsec
 import Text.Parsec.String
-import Debug.Trace
 
 data Contain a = forall a. TemplateData a => C a
 
@@ -45,7 +44,7 @@ graftTpl vars tpl = do
 compile :: TemplateData a => a -> Chunk -> Either GraftError T.Text
 compile _ (Lit t) = Right t
 compile vm (Bind key) = case (child k vm) of
-    Nothing -> trace (show k) $ Left $ GraftMissingVariable key
+    Nothing -> Left $ GraftMissingVariable key
     Just v -> case (resolve v kx) of
         Left e -> Left e
         Right (Val val) -> Right val
@@ -151,7 +150,7 @@ loopStart = do
 
 loopEnd :: Parser ()
 loopEnd = do
-    string "[["
+    try (string "[[")
     many (char ' ')
     string "end"
     many (char ' ')
