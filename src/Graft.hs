@@ -15,6 +15,7 @@ import Control.Monad (filterM, foldM)
 import Control.Monad.Except (MonadError, throwError)
 import Control.Monad.Reader (MonadReader)
 import Control.Monad.Trans (MonadIO, liftIO)
+import Data.List (break)
 import qualified Data.Map as M
 import Data.Monoid
 import qualified Data.Text as T
@@ -41,7 +42,7 @@ graftTpl vars tpl = do
         Left e -> throwG e
         Right r -> return r
 
-compile :: TemplateData a => a -> Chunk -> Either GraftError T.Text
+compile :: TemplateData a => a -> Part -> Either GraftError T.Text
 compile _ (Lit t) = Right t
 compile vm (Bind key) = case (child k vm) of
     Nothing -> Left $ GraftMissingVariable key
@@ -99,13 +100,31 @@ attachTemplate (GraftData tpls) tpln tpl = GraftData . flip (M.insert tpln) tpls
     where
     pres = case (parse parseTemplate "" tpl) of
         Left e -> Left $ show e
-        Right r -> Right r
+        Right cx -> constructTemplate cx
 
-parseTemplate :: Parser Template
+constructTemplate :: [Chunk] -> Either String Template
+constructTemplate [] = return []
+constructTemplate (CLit s:cx) = (Lit s:) <$> constructTemplate cx
+constructTemplate (CBind v:cx) = (Bind v:) <$> constructTemplate cx
+constructTemplate (CLoopEnd:cx) = Left "Unexpected loop end"
+constructTemplate (CLoopStart b v:cx) = do
+    (loop, cx') <- constructLoop b v cx
+    (loop:) <$> constructTemplate cx'
+
+constructLoop :: T.Text -> T.Text -> [Chunk] -> Either String (Part, [Chunk])
+constructLoop bound var cx = do
+    let (tx,rbx) = break (==CLoopEnd) $ reverse cx
+    case rbx of
+        [] -> Left "Unterminated loop"
+        (_:bx) -> do
+            tpl <- constructTemplate (reverse bx)
+            return (Loop bound var tpl, reverse tx)
+
+parseTemplate :: Parser [Chunk]
 parseTemplate = many1 (lit <|> mbind <|> mloop)
 
 lit :: Parser Chunk
-lit = Lit . T.pack <$> many1 (noneOf "{[")
+lit = CLit . T.pack <$> many1 (noneOf "{[")
 
 mbind :: Parser Chunk
 mbind = (try bind) <|> rchunk
@@ -113,46 +132,37 @@ mbind = (try bind) <|> rchunk
     rchunk = do
         char '{'
         rv <- many $ noneOf "{["
-        return . Lit . T.pack $ ("{" ++ rv)
+        return . CLit . T.pack $ ("{" ++ rv)
 
 bind :: Parser Chunk
 bind = do
     string "{{"
     v <- T.strip . T.pack <$> many1 (noneOf "}")
     string "}}"
-    return (Bind v)
+    return (CBind v)
 
 mloop :: Parser Chunk
-mloop = (try loop) <|> rchunk
+mloop = (try loopStart) <|> (try loopEnd) <|> rchunk
     where
     rchunk = do
         char '['
         rv <- many $ noneOf "{["
-        return . Lit . T.pack $ ("[" ++ rv)
+        return . CLit . T.pack $ ("[" ++ rv)
 
-loop :: Parser Chunk
-loop = do
-    (b, n) <- loopStart
-    dta <- manyTill anyChar loopEnd
-    case (parse parseTemplate "" dta) of
-        Left e -> fail (show e)
-        Right tpl -> return (Loop b n tpl)
-
-
-loopStart :: Parser (T.Text, T.Text)
+loopStart :: Parser Chunk
 loopStart = do
     string "[["
     b <- T.strip . T.pack <$> many1 (noneOf ":")
     char ':'
     n <- T.strip . T.pack <$> many1 (noneOf "]")
     string "]]"
-    return (b, n)
+    return $ CLoopStart b n
 
-loopEnd :: Parser ()
+loopEnd :: Parser Chunk
 loopEnd = do
     try (string "[[")
     many (char ' ')
     string "end"
     many (char ' ')
     string "]]"
-    return ()
+    return CLoopEnd

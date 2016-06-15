@@ -19,10 +19,17 @@ data GraftData = GraftData {
     _graftDataTemplates :: M.Map String Template
 } deriving Show
 
-type Template = [Chunk]
+type Template = [Part]
 type VarMap = M.Map Text Var
 
 data Chunk
+    = CLit Text
+    | CBind Text
+    | CLoopStart Text Text --name bound_as
+    | CLoopEnd
+    deriving (Eq, Show)
+
+data Part
     = Lit Text
     | Bind Text
     | Loop Text Text Template --name bound_as subtemplate
