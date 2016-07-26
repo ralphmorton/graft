@@ -113,12 +113,23 @@ constructTemplate (CLoopStart b v:cx) = do
 
 constructLoop :: T.Text -> T.Text -> [Chunk] -> Either String (Part, [Chunk])
 constructLoop bound var cx = do
-    let (tx,rbx) = break (==CLoopEnd) $ reverse cx
-    case rbx of
-        [] -> Left "Unterminated loop"
-        (_:bx) -> do
-            tpl <- constructTemplate (reverse bx)
-            return (Loop bound var tpl, reverse tx)
+    (lx, rx) <- takeLoopContents 0 cx
+    tpl <- constructTemplate lx
+    return (Loop bound var tpl, rx)
+
+takeLoopContents :: Int -> [Chunk] -> Either String ([Chunk], [Chunk])
+takeLoopContents n [] = Left "Unterminated loop"
+takeLoopContents n (c@(CLoopStart _ _):rx) = do
+    (cx, rx') <- takeLoopContents (n + 1) rx
+    return (c:cx, rx')
+takeLoopContents n (CLoopEnd:rx)
+    | n - 1 < 0 = return ([], rx)
+    | otherwise = do
+        (cx, rx') <- takeLoopContents (n - 1) rx
+        return (CLoopEnd:cx, rx')
+takeLoopContents n (c:rx) = do
+    (cx, rx') <- takeLoopContents n rx
+    return (c:cx, rx')
 
 parseTemplate :: Parser [Chunk]
 parseTemplate = many1 (lit <|> mbind <|> mloop)
@@ -142,7 +153,7 @@ bind = do
     return (CBind v)
 
 mloop :: Parser Chunk
-mloop = (try loopStart) <|> (try loopEnd) <|> rchunk
+mloop = (try loopEnd) <|>(try loopStart) <|>  rchunk
     where
     rchunk = do
         char '['
