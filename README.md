@@ -19,5 +19,6 @@ You can define a loop like this:
     Hello, {{person.name}}
 [[ end ]]
 
+<|sub_template.tpl|>
 
 ```

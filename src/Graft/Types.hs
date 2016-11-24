@@ -27,12 +27,14 @@ data Chunk
     | CBind Text
     | CLoopStart Text Text --name bound_as
     | CLoopEnd
+    | CSubTemplate Text
     deriving (Eq, Show)
 
 data Part
     = Lit Text
     | Bind Text
     | Loop Text Text Template --name bound_as subtemplate
+    | SubTemplate Text
     deriving Show
 
 data Var where
@@ -41,7 +43,7 @@ data Var where
     Array :: TemplateData a => [a] -> Var
 
 data GraftError
-    = GraftMissingTemplate
+    = GraftMissingTemplate String
     | GraftMissingVariable Text
     | GraftVariableMismatch Text
     deriving Show

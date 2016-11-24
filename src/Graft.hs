@@ -30,40 +30,39 @@ instance TemplateData (Contain a) where
 
 -- |Compile a template
 graft :: (MonadError e m, AsGraftError e, MonadReader r m, HasGraftData r, TemplateData a) => String -> a -> m T.Text
-graft name vars = do
+graft name vars = graftTpl vars =<< lookupTpl name
+
+lookupTpl :: (MonadError e m, AsGraftError e, MonadReader r m, HasGraftData r) => String -> m Template
+lookupTpl name = do
     (GraftData tpls) <- view graftData
-    maybe (throwG GraftMissingTemplate) (graftTpl vars) (M.lookup name tpls)
+    maybe (throwG $ GraftMissingTemplate name) return (M.lookup name tpls)
 
-graftTpl :: (MonadError e m, AsGraftError e, TemplateData a) => a -> Template -> m T.Text
+graftTpl :: (MonadError e m, AsGraftError e, MonadReader r m, HasGraftData r, TemplateData a) => a -> Template -> m T.Text
 graftTpl vars tpl = do
-    let ox = compile vars <$> tpl
-    let res = foldM (\s -> either Left (Right . mappend s)) mempty ox
-    case res of
-        Left e -> throwG e
-        Right r -> return r
+    ox <- mapM (compile vars) tpl
+    return $ mconcat ox
 
-compile :: TemplateData a => a -> Part -> Either GraftError T.Text
-compile _ (Lit t) = Right t
+compile :: (MonadError e m, AsGraftError e, MonadReader r m, HasGraftData r, TemplateData a) => a -> Part -> m T.Text
+compile _ (Lit t) = return t
 compile vm (Bind key) = case (child k vm) of
-    Nothing -> Left $ GraftMissingVariable key
+    Nothing -> throwG $ GraftMissingVariable key
     Just v -> case (resolve v kx) of
-        Left e -> Left e
-        Right (Val val) -> Right val
-        Right _ -> Left $ GraftVariableMismatch key
+        Left e -> throwG e
+        Right (Val val) -> return val
+        Right _ -> throwG $ GraftVariableMismatch key
     where
     (k:kx) = T.splitOn "." key
 compile vm (Loop bound key tpl) = case (child k vm) of
-    Nothing -> Left $ GraftMissingVariable key
+    Nothing -> throwG $ GraftMissingVariable key
     Just v -> case (resolve v kx) of
-        Left e -> Left e
-        Right (Array vx) -> do
-            tx <- mapM (compileLoop bound tpl vm) vx
-            return $ mconcat tx
-        Right _ -> Left $ GraftVariableMismatch key
+        Left e -> throwG e
+        Right (Array vx) -> mconcat <$> mapM (compileLoop bound tpl vm) vx
+        Right _ -> throwG $ GraftVariableMismatch key
     where
     (k:kx) = T.splitOn "." key
+compile vm (SubTemplate t) = graftTpl vm =<< lookupTpl (T.unpack t)
 
-compileLoop :: (TemplateData a, TemplateData b) => T.Text -> Template -> a -> b -> Either GraftError T.Text
+compileLoop :: (MonadError e m, AsGraftError e, MonadReader r m, HasGraftData r, TemplateData a, TemplateData b) => T.Text -> Template -> a -> b -> m T.Text
 compileLoop bound tpl a b = do
     let bmap = M.fromList [(bound, Object b)]
     let dta = [C bmap, C a]
@@ -110,6 +109,7 @@ constructTemplate (CLoopEnd:cx) = Left "Unexpected loop end"
 constructTemplate (CLoopStart b v:cx) = do
     (loop, cx') <- constructLoop b v cx
     (loop:) <$> constructTemplate cx'
+constructTemplate (CSubTemplate t:cx) = (SubTemplate t:) <$> constructTemplate cx
 
 constructLoop :: T.Text -> T.Text -> [Chunk] -> Either String (Part, [Chunk])
 constructLoop bound var cx = do
@@ -132,10 +132,10 @@ takeLoopContents n (c:rx) = do
     return (c:cx, rx')
 
 parseTemplate :: Parser [Chunk]
-parseTemplate = many1 (lit <|> mbind <|> mloop)
+parseTemplate = many1 (lit <|> mbind <|> mloop <|> msub)
 
 lit :: Parser Chunk
-lit = CLit . T.pack <$> many1 (noneOf "{[")
+lit = CLit . T.pack <$> many1 (noneOf "{[<")
 
 mbind :: Parser Chunk
 mbind = (try bind) <|> rchunk
@@ -153,7 +153,7 @@ bind = do
     return (CBind v)
 
 mloop :: Parser Chunk
-mloop = (try loopEnd) <|>(try loopStart) <|>  rchunk
+mloop = (try loopEnd) <|> (try loopStart) <|> rchunk
     where
     rchunk = do
         char '['
@@ -177,3 +177,18 @@ loopEnd = do
     many (char ' ')
     string "]]"
     return CLoopEnd
+
+msub :: Parser Chunk
+msub = (try sub) <|> rchunk
+    where
+    rchunk = do
+        char '<'
+        rv <- many $ noneOf "{[<"
+        return . CLit . T.pack $ ("<" ++ rv)
+
+sub :: Parser Chunk
+sub = do
+    string "<|"
+    v <- T.strip . T.pack <$> many1 (noneOf "|")
+    string "|>"
+    return (CSubTemplate v)
