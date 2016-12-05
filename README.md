@@ -21,4 +21,6 @@ You can define a loop like this:
 
 <|sub_template.tpl|>
 
+<|@named_subtemplate|>
+
 ```
