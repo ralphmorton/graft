@@ -27,14 +27,14 @@ data Chunk
     | CBind Text
     | CLoopStart Text Text --name bound_as
     | CLoopEnd
-    | CSubTemplate Text
+    | CSubTemplate Text Bool
     deriving (Eq, Show)
 
 data Part
     = Lit Text
     | Bind Text
     | Loop Text Text Template --name bound_as subtemplate
-    | SubTemplate Text
+    | SubTemplate Text Bool
     deriving Show
 
 data Var where

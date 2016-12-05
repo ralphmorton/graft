@@ -60,7 +60,15 @@ compile vm (Loop bound key tpl) = case (child k vm) of
         Right _ -> throwG $ GraftVariableMismatch key
     where
     (k:kx) = T.splitOn "." key
-compile vm (SubTemplate t) = graftTpl vm =<< lookupTpl (T.unpack t)
+compile vm (SubTemplate t False) = graftTpl vm =<< lookupTpl (T.unpack t)
+compile vm (SubTemplate key True) = case (child k vm) of
+    Nothing -> throwG $ GraftMissingVariable key
+    Just v -> case (resolve v kx) of
+        Left e -> throwG e
+        Right (Val val) -> graftTpl vm =<< lookupTpl (T.unpack val)
+        Right _ -> throwG $ GraftVariableMismatch key
+    where
+    (k:kx) = T.splitOn "." key
 
 compileLoop :: (MonadError e m, AsGraftError e, MonadReader r m, HasGraftData r, TemplateData a, TemplateData b) => T.Text -> Template -> a -> b -> m T.Text
 compileLoop bound tpl a b = do
@@ -109,7 +117,7 @@ constructTemplate (CLoopEnd:cx) = Left "Unexpected loop end"
 constructTemplate (CLoopStart b v:cx) = do
     (loop, cx') <- constructLoop b v cx
     (loop:) <$> constructTemplate cx'
-constructTemplate (CSubTemplate t:cx) = (SubTemplate t:) <$> constructTemplate cx
+constructTemplate (CSubTemplate t ref:cx) = (SubTemplate t ref:) <$> constructTemplate cx
 
 constructLoop :: T.Text -> T.Text -> [Chunk] -> Either String (Part, [Chunk])
 constructLoop bound var cx = do
@@ -189,6 +197,7 @@ msub = (try sub) <|> rchunk
 sub :: Parser Chunk
 sub = do
     string "<|"
+    isRef <- try (const True <$> char '@') <|> (pure False)
     v <- T.strip . T.pack <$> many1 (noneOf "|")
     string "|>"
-    return (CSubTemplate v)
+    return (CSubTemplate v isRef)
