@@ -150,7 +150,7 @@ mbind = (try bind) <|> rchunk
     where
     rchunk = do
         char '{'
-        rv <- many $ noneOf "{["
+        rv <- many $ noneOf "{[<"
         return . CLit . T.pack $ ("{" ++ rv)
 
 bind :: Parser Chunk
@@ -165,7 +165,7 @@ mloop = (try loopEnd) <|> (try loopStart) <|> rchunk
     where
     rchunk = do
         char '['
-        rv <- many $ noneOf "{["
+        rv <- many $ noneOf "{[<"
         return . CLit . T.pack $ ("[" ++ rv)
 
 loopStart :: Parser Chunk
