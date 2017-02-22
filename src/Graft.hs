@@ -60,6 +60,13 @@ compile vm (Loop bound key tpl) = case (child k vm) of
         Right _ -> throwG $ GraftVariableMismatch key
     where
     (k:kx) = T.splitOn "." key
+compile vm (Conditional key tpl) = case (child k vm) of
+    Nothing -> pure ""
+    Just v -> case (resolve v kx) of
+        Right _ -> graftTpl vm tpl
+        _ -> pure ""
+    where
+    (k:kx) = T.splitOn "." key
 compile vm (SubTemplate t False) = graftTpl vm =<< lookupTpl (T.unpack t)
 compile vm (SubTemplate key True) = case (child k vm) of
     Nothing -> throwG $ GraftMissingVariable key
@@ -113,34 +120,46 @@ constructTemplate :: [Chunk] -> Either String Template
 constructTemplate [] = return []
 constructTemplate (CLit s:cx) = (Lit s:) <$> constructTemplate cx
 constructTemplate (CBind v:cx) = (Bind v:) <$> constructTemplate cx
-constructTemplate (CLoopEnd:cx) = Left "Unexpected loop end"
+constructTemplate (CControlEnd:cx) = Left "Unexpected control flow end"
 constructTemplate (CLoopStart b v:cx) = do
     (loop, cx') <- constructLoop b v cx
     (loop:) <$> constructTemplate cx'
+constructTemplate (CConditionalStart v:cx) = do
+    (conditional, cx') <- constructConditional v cx
+    (conditional:) <$> constructTemplate cx'
 constructTemplate (CSubTemplate t ref:cx) = (SubTemplate t ref:) <$> constructTemplate cx
 
 constructLoop :: T.Text -> T.Text -> [Chunk] -> Either String (Part, [Chunk])
 constructLoop bound var cx = do
-    (lx, rx) <- takeLoopContents 0 cx
+    (lx, rx) <- takeControlContents 0 cx
     tpl <- constructTemplate lx
     return (Loop bound var tpl, rx)
 
-takeLoopContents :: Int -> [Chunk] -> Either String ([Chunk], [Chunk])
-takeLoopContents n [] = Left "Unterminated loop"
-takeLoopContents n (c@(CLoopStart _ _):rx) = do
-    (cx, rx') <- takeLoopContents (n + 1) rx
+constructConditional :: T.Text -> [Chunk] -> Either String (Part, [Chunk])
+constructConditional var cx = do
+    (cx, rx) <- takeControlContents 0 cx
+    tpl <- constructTemplate cx
+    return (Conditional var tpl, rx)
+
+takeControlContents :: Int -> [Chunk] -> Either String ([Chunk], [Chunk])
+takeControlContents n [] = Left "Unterminated control flow structure"
+takeControlContents n (c@(CLoopStart _ _):rx) = do
+    (cx, rx') <- takeControlContents (n + 1) rx
     return (c:cx, rx')
-takeLoopContents n (CLoopEnd:rx)
+takeControlContents n (c@(CConditionalStart _):rx) = do
+    (cx, rx') <- takeControlContents (n + 1) rx
+    return (c:cx, rx')
+takeControlContents n (CControlEnd:rx)
     | n - 1 < 0 = return ([], rx)
     | otherwise = do
-        (cx, rx') <- takeLoopContents (n - 1) rx
-        return (CLoopEnd:cx, rx')
-takeLoopContents n (c:rx) = do
-    (cx, rx') <- takeLoopContents n rx
+        (cx, rx') <- takeControlContents (n - 1) rx
+        return (CControlEnd:cx, rx')
+takeControlContents n (c:rx) = do
+    (cx, rx') <- takeControlContents n rx
     return (c:cx, rx')
 
 parseTemplate :: Parser [Chunk]
-parseTemplate = many1 (lit <|> mbind <|> mloop <|> msub)
+parseTemplate = many1 (lit <|> mbind <|> mcontrol <|> msub)
 
 lit :: Parser Chunk
 lit = CLit . T.pack <$> many1 (noneOf "{[<")
@@ -160,31 +179,47 @@ bind = do
     string "}}"
     return (CBind v)
 
-mloop :: Parser Chunk
-mloop = (try loopEnd) <|> (try loopStart) <|> rchunk
+mcontrol :: Parser Chunk
+mcontrol = (try controlEnd) <|> (try controlStart) <|> rchunk
     where
     rchunk = do
         char '['
         rv <- many $ noneOf "{[<"
         return . CLit . T.pack $ ("[" ++ rv)
 
+controlStart :: Parser Chunk
+controlStart = do
+    string "[["
+    c <- control
+    string "]]"
+    return c
+
+control :: Parser Chunk
+control = try conditionalStart <|> try loopStart
+
 loopStart :: Parser Chunk
 loopStart = do
-    string "[["
+    skipMany space
     b <- T.strip . T.pack <$> many1 (noneOf ":")
     char ':'
     n <- T.strip . T.pack <$> many1 (noneOf "]")
-    string "]]"
-    return $ CLoopStart b n
+    return (CLoopStart b n)
 
-loopEnd :: Parser Chunk
-loopEnd = do
+conditionalStart :: Parser Chunk
+conditionalStart = do
+    skipMany space
+    _ <- char '?'
+    n <- T.strip . T.pack <$> many1 (noneOf "]")
+    return (CConditionalStart n)
+
+controlEnd :: Parser Chunk
+controlEnd = do
     try (string "[[")
     many (char ' ')
     string "end"
     many (char ' ')
     string "]]"
-    return CLoopEnd
+    return CControlEnd
 
 msub :: Parser Chunk
 msub = (try sub) <|> rchunk

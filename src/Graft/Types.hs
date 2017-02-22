@@ -25,8 +25,9 @@ type VarMap = M.Map Text Var
 data Chunk
     = CLit Text
     | CBind Text
-    | CLoopStart Text Text --name bound_as
-    | CLoopEnd
+    | CLoopStart Text Text
+    | CConditionalStart Text
+    | CControlEnd
     | CSubTemplate Text Bool
     deriving (Eq, Show)
 
@@ -34,6 +35,7 @@ data Part
     = Lit Text
     | Bind Text
     | Loop Text Text Template --name bound_as subtemplate
+    | Conditional Text Template --variable subtemplate
     | SubTemplate Text Bool
     deriving Show
 

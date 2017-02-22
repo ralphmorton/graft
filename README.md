@@ -19,8 +19,18 @@ You can define a loop like this:
     Hello, {{person.name}}
 [[ end ]]
 
+Subtemplates can be referened by name:
+
 <|sub_template.tpl|>
 
+Or by variable lookup:
+
 <|@named_subtemplate|>
+
+Conditional rendering:
+
+[[ ?render ]]
+    This will be rendered if {{render}} exists
+[[ end ]]
 
 ```
