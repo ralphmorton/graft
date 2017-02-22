@@ -19,9 +19,10 @@ import Data.List (break)
 import qualified Data.Map as M
 import Data.Monoid
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
 import System.Directory (doesFileExist, getDirectoryContents)
 import Text.Parsec
-import Text.Parsec.String
+import Text.Parsec.Text
 
 data Contain a = forall a. TemplateData a => C a
 
@@ -102,14 +103,14 @@ loadDirectory dir = liftIO $ do
     rx <- mapM loadTpl files
     return $ foldM (\g -> uncurry $ attachTemplate g) mempty rx
 
-loadTpl :: MonadIO m => String -> m (String, String)
+loadTpl :: MonadIO m => String -> m (String, T.Text)
 loadTpl path = liftIO $ do
     let fname = reverse . takeWhile (\c -> c /= '/' && c /= '\\') $ reverse path
-    dta <- readFile path
+    dta <- T.readFile path
     return (fname, dta)
 
 -- |Attach a new template
-attachTemplate :: GraftData -> String -> String -> Either String GraftData
+attachTemplate :: GraftData -> String -> T.Text -> Either String GraftData
 attachTemplate (GraftData tpls) tpln tpl = GraftData . flip (M.insert tpln) tpls <$> pres
     where
     pres = case (parse parseTemplate "" tpl) of
